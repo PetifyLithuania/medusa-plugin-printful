@@ -1,12 +1,12 @@
 {
-  "name": "medusa-plugin-printful",
+  "name": "medusa-plugin-printful-v2",
   "version": "1.5.6",
   "packageManager": "yarn@1.22.19",
   "description": "A Medusa plugin that enables Printful as a fulfillment provider and provides product and order synchronization.",
   "author": "Marco Freiberger <marco@freibergersyntax.dev>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/fsyntax/medusa-plugin-printful.git"
+    "url": "https://github.com/PetifyLithuania/medusa-plugin-printful.git"
   },
   "scripts": {
     "build": "rimraf dist && tsc",

@@ -68,7 +68,7 @@ class PrintfulService extends TransactionBaseService {
         this.storeId = options.storeId;
         this.productTags = options.productTags;
         this.productCategories = options.productCategories;
-        this.categoryAliases = options.categoryAliases
+        this.categoryAliases = options.categoryAliases ?? { exactMatch: {}, inexactMatch: {} }
         this.confirmOrder = options.confirmOrder || false;
 
         this.backoffOptions = {
@@ -96,7 +96,7 @@ class PrintfulService extends TransactionBaseService {
         const {
             result: printfulStoreProduct,
             code
-        } = await this.printfulClient.get(`store/products/${id}`, {store_id: this.storeId});
+        }: any = await this.printfulClient.get(`store/products/${id}`, {store_id: this.storeId});
 
         if (code !== 200) {
             console.error("Error getting product from Printful: ", printfulStoreProduct)
@@ -110,7 +110,7 @@ class PrintfulService extends TransactionBaseService {
         const {
             result: variant,
             code: code
-        } = await this.printfulClient.get(`store/variants/${id}`, {store_id: this.storeId});
+        }: any = await this.printfulClient.get(`store/variants/${id}`, {store_id: this.storeId});
         if (code !== 200) {
             console.error("Error getting variant from Printful: ", variant)
             return null;
@@ -161,7 +161,7 @@ class PrintfulService extends TransactionBaseService {
                                     variant,
                                     product
                                 }
-                            } = await this.printfulClient.get(`products/variant/${(variantChunk as { variant_id: string }).variant_id}`);
+                            }: any = await this.printfulClient.get(`products/variant/${(variantChunk as { variant_id: string }).variant_id}`);
                             return {...variant, parentProduct: product};
                         }, this.backoffOptions);
                         chunkResults.push(result);
@@ -242,13 +242,7 @@ class PrintfulService extends TransactionBaseService {
                 for (const {currency, id, product, retail_price, sku, variant_id} of chunk as { currency: string, id: string, product: any, retail_price: string, sku: string, variant_id: string }[]) {
 
                     const getVariantOptions = async () => {
-                        const {result: {variant: option}} = await this.printfulClient.get(`products/variant/${variant_id}`);
-
-                        const options = {
-                            ...(option.size ? {size: option.size} : {}),
-                            ...(option.color ? {color: option.color} : {}),
-                            ...(option.color_code ? {color_code: option.color_code} : {})
-                        }
+                        const {result: {variant: option}}: any = await this.printfulClient.get(`products/variant/${variant_id}`);
 
                         const metadata = {
                             brand: product.name,
@@ -257,12 +251,15 @@ class PrintfulService extends TransactionBaseService {
                             printful_product_id: product.product_id,
                             printful_catalog_product_id: product.id,
                             size_tables: productSizeGuide?.size_tables ?? null,
-                            ...options
+                            ...(option.size ? {size: option.size} : {}),
+                            ...(option.color ? {color: option.color} : {}),
+                            ...(option.color_code ? {color_code: option.color_code} : {})
                         }
-                        if(option.color) {
-                            metadata.color = option.color;
-                            metadata.color_code = option.color_code;
-                        }
+                        
+                        const options = [
+                            ...(option.size ? [{ value: option.size }] : []),
+                            ...(option.color ? [{ value: option.color }] : []),
+                        ];
 
                         return {
                             title: productObj.title + (option.size ? ` - ${option.size}` : '') + (option.color ? ` / ${option.color}` : ''),
@@ -275,7 +272,8 @@ class PrintfulService extends TransactionBaseService {
                                 amount: this.convertToInteger(retail_price),
                                 currency_code: currency.toLowerCase()
                             }],
-                            metadata
+                            metadata,
+                            options
                         }
                     }
                     const variantOptions = await backOff(getVariantOptions, this.backoffOptions);
@@ -296,27 +294,6 @@ class PrintfulService extends TransactionBaseService {
             try {
                 const createdProduct = await this.productService.create(productToPush);
                 console.log(`${green('[medusa-plugin-printful]:')} Created product in Medusa: ${green(createdProduct.id)}`);
-                if (createdProduct) {
-                    console.log(`${blue("[medusa-plugin-printful]:")} Trying to add options to variants...`);
-                    const {variants, options} = await this.productService.retrieve(createdProduct.id, {
-                        relations: ['variants', 'options'],
-                    });
-
-
-                    for (const option of options) {
-                        for (const variant of variants) {
-                            if (option.title === 'size' || option.title === 'color') {
-                                const value = variant.metadata[option.title];
-                                if (value !== null) {
-                                    const addedOption = await this.productVariantService.addOptionValue(variant.id, option.id, value as string);
-                                    if (addedOption) {
-                                        console.log(`${green('[medusa-plugin-printful]:')} Updated variant ${variant.id} option ${option.id} to ${value}! ✅`);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
             } catch (e) {
                 console.error(`${red("[medusa-plugin-printful]:")} There appeared an error trying to create '${red(productObj.title)}' in Medusa: `, e)
                 throw e
@@ -354,7 +331,7 @@ class PrintfulService extends TransactionBaseService {
                                 variant,
                                 product
                             }
-                        } = await this.printfulClient.get(`products/variant/${v.variant_id}`);
+                        }: any = await this.printfulClient.get(`products/variant/${v.variant_id}`);
                         return {
                             ...variant, parentProduct: product
                         }
@@ -399,7 +376,7 @@ class PrintfulService extends TransactionBaseService {
 
                 const productVariantsObj = await Promise.all(printfulProductVariant.map(async (variant) => {
 
-                    const {result: {variant: option}} = await backOff(async () => {
+                    const {result: {variant: option}}: any = await backOff(async () => {
                         return await this.printfulClient.get(`products/variant/${variant.variant_id}`);
                     }, this.backoffOptions)
 
@@ -407,18 +384,21 @@ class PrintfulService extends TransactionBaseService {
 
                     if (medusaVariant !== undefined) {
                         const title = productObj.title + (option.size ? ` - ${option.size}` : '') + (option.color ? ` / ${option.color}` : '');
+
                         const metadata = {
                             medusa_id: medusaVariant.id,
                             printful_id: variant.id,
                             printful_catalog_variant_id: variant.variant_id,
-                            size: option.size,
-                            ...productSizeGuide
+                            ...(option.size ? {size: option.size} : {}),
+                            ...(option.color ? {color: option.color} : {}),
+                            ...(option.color_code ? {color_code: option.color_code} : {}),
+                            ...productSizeGuide,
                         };
 
-                        if(option.color) {
-                            metadata.color = option.color
-                            metadata.color_code = option.color_code
-                        }
+                        const options = [
+                            ...(option.size ? [{ value: option.size }] : []),
+                            ...(option.color ? [{ value: option.color }] : []),
+                        ];
 
                         return {
                             title,
@@ -427,7 +407,8 @@ class PrintfulService extends TransactionBaseService {
                                 amount: this.convertToInteger(variant.retail_price),
                                 currency_code: variant.currency.toLowerCase()
                             }],
-                            metadata
+                            metadata,
+                            options
                         };
                     } else {
                         console.log(`${blue('[medusa-plugin-printful]')} Creating new variant for product ${blue(medusaProduct.id)}...`);
@@ -455,11 +436,11 @@ class PrintfulService extends TransactionBaseService {
                             inventory_quantity: 100,
                             allow_backorder: true,
                             manage_inventory: false,
-                            options,
                             prices: [{
                                 amount: this.convertToInteger(variant.retail_price),
                                 currency_code: variant.currency.toLowerCase()
                             }],
+                            options
                         });
 
                         if (newVariant) {
@@ -471,13 +452,11 @@ class PrintfulService extends TransactionBaseService {
                                 medusa_id: newVariant.id,
                                 printful_id: variant.id,
                                 printful_catalog_variant_id: variant.variant_id,
-                                size: option.size,
+                                ...(option.size ? {size: option.size} : {}),
+                                ...(option.color ? {color: option.color} : {}),
+                                ...(option.color_code ? {color_code: option.color_code} : {}),
                                 ...productSizeGuide
                             };
-                            if(option.color) {
-                                metadata.color = option.color
-                                metadata.color_code = option.color_code
-                            }
                             return {
                                 title,
                                 sku: variant.sku,
@@ -485,7 +464,8 @@ class PrintfulService extends TransactionBaseService {
                                     amount: this.convertToInteger(variant.retail_price),
                                     currency_code: variant.currency.toLowerCase()
                                 }],
-                                metadata
+                                metadata,
+                                options
                             };
 
                         }
@@ -568,7 +548,7 @@ class PrintfulService extends TransactionBaseService {
                     }
                 })
 
-                const { code, result } = await this.printfulClient.get(`categories/${categories[0].main_category_id}`)
+                const { code, result }: any = await this.printfulClient.get(`categories/${categories[0].main_category_id}`)
 
                 return { code, result };
 
@@ -625,7 +605,7 @@ class PrintfulService extends TransactionBaseService {
         try {
             const {
                 result: {sync_variants: initialSyncVariants}
-            } = await this.printfulClient.get(`store/products/${data.external_id}`);
+            }: any = await this.printfulClient.get(`store/products/${data.external_id}`);
 
             const syncProduct = {
                 external_id: data.id,
@@ -656,7 +636,7 @@ class PrintfulService extends TransactionBaseService {
 
     async getProductSizeGuide(printfulProductId) {
         try {
-            const {result, code} = await this.printfulClient.get(`products/${printfulProductId}/sizes`, {unit: 'cm'});
+            const {result, code}: any = await this.printfulClient.get(`products/${printfulProductId}/sizes`, {unit: 'cm'});
             if (code === 200) {
                 return result;
             }
@@ -701,7 +681,7 @@ class PrintfulService extends TransactionBaseService {
     }
 
     async getCountryList() {
-        const {result: countries} = await this.printfulClient.get("countries", {store_id: this.storeId});
+        const {result: countries}: any = await this.printfulClient.get("countries", {store_id: this.storeId});
         if (countries) return countries;
     }
 
@@ -739,7 +719,7 @@ class PrintfulService extends TransactionBaseService {
                 })
             }
             console.log(`${blue("[medusa-plugin-printful]:")} Trying to send the order to printful with the following data: `, orderObj)
-            const order = await this.printfulClient.post("orders", {
+            const order: any = await this.printfulClient.post("orders", {
                 ...orderObj,
                 store_id: this.storeId,
                 confirm: this.confirmOrder
@@ -757,7 +737,7 @@ class PrintfulService extends TransactionBaseService {
     async cancelOrder(orderId: string | number) {
         try {
             console.log(`${yellow("[medusa-plugin-printful]:")} Trying to cancel order with id ${yellow(orderId)} on Printful`)
-            const {result, code} = await this.printfulClient.delete(`orders/@${orderId}`, {store_id: this.storeId});
+            const {result, code}: any = await this.printfulClient.delete(`orders/@${orderId}`, {store_id: this.storeId});
 
             if (code === 200) {
                 console.log(`${green("[medusa-plugin-printful]:")} Order has been successfully canceled!`, result)
@@ -778,7 +758,7 @@ class PrintfulService extends TransactionBaseService {
     }
 
     async getOrderData(orderId: string | number) {
-        const {result: orderData} = await this.printfulClient.get(`orders/${orderId}`, {store_id: this.storeId});
+        const {result: orderData}: any = await this.printfulClient.get(`orders/${orderId}`, {store_id: this.storeId});
         return orderData;
     }
 
